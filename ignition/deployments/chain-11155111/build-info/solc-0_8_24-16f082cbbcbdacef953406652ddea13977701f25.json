@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_24-16f082cbbcbdacef953406652ddea13977701f25",
+  "solcVersion": "0.8.24",
+  "solcLongVersion": "0.8.24+commit.e11b9ed9",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.5.1"
+  },
+  "userSourceNameMap": {
+    "contracts/StatusRegistry.sol": "project/contracts/StatusRegistry.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "shanghai",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/StatusRegistry.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\n/**\n * Status Registry: VC 폐기 상태 목록 (Bitstring 방식)\n * 각 발행자는 자신의 statusListId에 대한 bitstring을 관리한다.\n * 개인정보 없음 — 비트 인덱스가 폐기됐는지 여부만 저장.\n */\ncontract StatusRegistry {\n    // listId => index => revoked\n    mapping(uint256 => mapping(uint256 => bool)) private revokedBits;\n    // listId => 발행자 주소 (권한 관리)\n    mapping(uint256 => address) private listOwner;\n\n    uint256 public nextListId = 1;\n\n    event StatusListCreated(uint256 indexed listId, address indexed owner);\n    event Revoked(uint256 indexed listId, uint256 index, string reason);\n\n    // 발행자가 새 상태목록 생성\n    function createStatusList() external returns (uint256 listId) {\n        listId = nextListId++;\n        listOwner[listId] = msg.sender;\n        emit StatusListCreated(listId, msg.sender);\n    }\n\n    // VC 폐기 (사유 필수 — 감사 추적)\n    function revoke(uint256 listId, uint256 index, string calldata reason) external {\n        require(listOwner[listId] == msg.sender, \"Not list owner\");\n        require(bytes(reason).length > 0, \"Reason required\");\n        revokedBits[listId][index] = true;\n        emit Revoked(listId, index, reason);\n    }\n\n    // 폐기 여부 조회 (검증자가 호출)\n    function isRevoked(uint256 listId, uint256 index) external view returns (bool) {\n        return revokedBits[listId][index];\n    }\n\n    function getListOwner(uint256 listId) external view returns (address) {\n        return listOwner[listId];\n    }\n}\n"
+      }
+    }
+  }
+}

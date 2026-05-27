@@ -1,0 +1,25 @@
+# 의존성
+node_modules/
+
+# Next.js 빌드 결과물
+.next/
+out/
+
+# 환경 변수 (절대 커밋하지 말 것)
+.env
+.env.local
+.env.*.local
+
+# 로컬 데이터 (이제 Redis로 대체됨)
+data/
+
+# TypeScript 캐시
+tsconfig.tsbuildinfo
+
+# Hardhat 캐시 & 로컬 배포 기록
+cache/
+ignition/deployments/chain-31337/
+
+# 기타
+.DS_Store
+*.log

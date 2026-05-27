@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_24-b48820d52c54afec673964ff0f32e6baacc4bcd5",
+  "solcVersion": "0.8.24",
+  "solcLongVersion": "0.8.24+commit.e11b9ed9",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.5.1"
+  },
+  "userSourceNameMap": {
+    "contracts/DIDRegistry.sol": "project/contracts/DIDRegistry.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "shanghai",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/DIDRegistry.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\n/**\n * DID Registry: 발행자의 DID와 공개키만 저장 (개인정보 없음)\n */\ncontract DIDRegistry {\n    struct IssuerInfo {\n        bytes pubKey;      // Ed25519 공개키 (32 bytes)\n        bool registered;\n        address controller; // 이 DID를 제어하는 EOA\n    }\n\n    mapping(bytes32 => IssuerInfo) private registry;\n\n    event IssuerRegistered(bytes32 indexed didHash, address indexed controller);\n    event KeyRotated(bytes32 indexed didHash, address indexed controller);\n\n    // 발행자 DID 등록\n    function registerIssuer(bytes32 didHash, bytes calldata pubKey) external {\n        require(!registry[didHash].registered, \"DID already registered\");\n        require(pubKey.length == 32, \"Invalid pubKey length\");\n        registry[didHash] = IssuerInfo(pubKey, true, msg.sender);\n        emit IssuerRegistered(didHash, msg.sender);\n    }\n\n    // 공개키 회전 (키 분실 시)\n    function rotateKey(bytes32 didHash, bytes calldata newPubKey) external {\n        require(registry[didHash].registered, \"DID not registered\");\n        require(registry[didHash].controller == msg.sender, \"Not controller\");\n        require(newPubKey.length == 32, \"Invalid pubKey length\");\n        registry[didHash].pubKey = newPubKey;\n        emit KeyRotated(didHash, msg.sender);\n    }\n\n    // 공개키 조회 (검증자가 호출)\n    function resolveKey(bytes32 didHash) external view returns (bytes memory) {\n        require(registry[didHash].registered, \"DID not found\");\n        return registry[didHash].pubKey;\n    }\n\n    function isRegistered(bytes32 didHash) external view returns (bool) {\n        return registry[didHash].registered;\n    }\n}\n"
+      }
+    }
+  }
+}
