@@ -6,12 +6,17 @@ import { getOrCreateWallet, WalletData } from "@/lib/wallet";
 import { issueVC, VerifiableCredential } from "@/lib/vc";
 import { connectMetaMask, MetaMaskState, getConnectedAccount, switchToHardhat } from "@/lib/metamask";
 import { registerIssuerOnChain, resolvePublicKey } from "@/lib/blockchain";
+import { recordWorkedMinutes } from "@/lib/pay";
 
 // ── 타입 ────────────────────────────────────────────────────────────────────
 interface AttendanceRecord {
   date: string;
   checkInTime: string;
   checkOutTime?: string;
+  checkInAt?: number;
+  checkOutAt?: number;
+  workedMinutes?: number;
+  isSubstitute?: boolean;
 }
 
 interface Employee {
@@ -271,10 +276,10 @@ export default function EmployerPage() {
       return;
     }
 
-    // 실제 총 근무시간 계산: 출근일수 × (주간근무시간 / 주당 근무요일 수)
-    const daysPerWeek = emp.weekdays.length || 1;
-    const hoursPerDay = emp.weeklyHours / daysPerWeek;
-    const actualTotalHours = Math.round(emp.attendance.length * hoursPerDay);
+    // 실제 총 근무시간 계산: 출퇴근 시각 기반 실근무시간 합산
+    const actualTotalHours = Math.round(
+      emp.attendance.reduce((sum, a) => sum + recordWorkedMinutes(a), 0) / 60
+    );
 
     const today = new Date().toISOString().split("T")[0];
 
@@ -674,7 +679,9 @@ function EmployeeRow({
   const checkedToday = emp.attendance.some((a) => a.date === today);
   const daysPerWeek = emp.weekdays.length || 1;
   const hoursPerDay = emp.weeklyHours / daysPerWeek;
-  const estimatedHours = Math.round(attendedCount * hoursPerDay);
+  const estimatedHours = Math.round(
+    emp.attendance.reduce((sum, a) => sum + recordWorkedMinutes(a), 0) / 60
+  );
 
   return (
     <div
@@ -743,16 +750,21 @@ function EmployeeRow({
             <div>
               <p className="text-xs font-medium text-gray-600 mb-2">출근 기록 ({emp.attendance.length}회)</p>
               <div className="space-y-1 max-h-32 overflow-y-auto">
-                {[...emp.attendance].reverse().map((a) => (
-                  <div key={a.date} className="flex justify-between text-xs bg-green-50 rounded px-2 py-1">
-                    <span className="text-green-700">{a.date}</span>
-                    <span className={a.checkOutTime ? "text-blue-600" : "text-green-600"}>
-                      {a.checkOutTime
-                        ? `${a.checkInTime} → ${a.checkOutTime}`
-                        : `${a.checkInTime} (퇴근 전)`}
-                    </span>
-                  </div>
-                ))}
+                {[...emp.attendance].reverse().map((a) => {
+                  const worked = recordWorkedMinutes(a);
+                  return (
+                    <div key={a.date} className={`flex justify-between text-xs rounded px-2 py-1 ${a.isSubstitute ? "bg-purple-50" : "bg-green-50"}`}>
+                      <span className={a.isSubstitute ? "text-purple-700" : "text-green-700"}>
+                        {a.date}{a.isSubstitute && <span className="ml-1 px-1 rounded bg-purple-100 text-purple-700">대타</span>}
+                      </span>
+                      <span className={a.checkOutTime ? "text-blue-600" : "text-green-600"}>
+                        {a.checkOutTime
+                          ? `${a.checkInTime} → ${a.checkOutTime}${worked ? ` (${(worked / 60).toFixed(1)}h)` : ""}`
+                          : `${a.checkInTime} (퇴근 전)`}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -790,11 +802,9 @@ function EmployeeRow({
 function TerminatedEmployeeRow({ emp, onDelete }: { emp: Employee; onDelete: () => void }) {
   const [showDetail, setShowDetail] = useState(false);
   const vc = emp.vc as VerifiableCredential | undefined;
-  const daysPerWeek = emp.weekdays.length || 1;
-  const hoursPerDay = emp.weeklyHours / daysPerWeek;
   const totalHours = vc
     ? (vc as VerifiableCredential).credentialSubject?.totalHours
-    : Math.round(emp.attendance.length * hoursPerDay);
+    : Math.round(emp.attendance.reduce((sum, a) => sum + recordWorkedMinutes(a), 0) / 60);
 
   return (
     <div className="p-4 bg-gray-50">

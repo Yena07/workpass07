@@ -20,16 +20,21 @@ export async function POST(
       return NextResponse.json({ error: `이미 퇴근 체크되었습니다 (${todayRecord.checkOutTime})` }, { status: 409 });
     }
 
+    const now = Date.now();
     const checkOutTime = new Date().toLocaleTimeString("ko-KR", {
       hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
+    const workedMinutes = todayRecord.checkInAt
+      ? Math.max(1, Math.round((now - todayRecord.checkInAt) / 60000))
+      : undefined;
 
-    const updated = await recordCheckOut(id, today, checkOutTime);
+    const updated = await recordCheckOut(id, today, { checkOutTime, checkOutAt: now, workedMinutes });
     return NextResponse.json({
       success: true,
       date: today,
       checkInTime: todayRecord.checkInTime,
       checkOutTime,
+      workedMinutes: workedMinutes ?? null,
       totalAttendance: updated?.attendance.length ?? 0,
     });
   } catch (e) {

@@ -12,8 +12,12 @@ import { randomUUID } from "crypto";
 
 export interface AttendanceRecord {
   date: string;
-  checkInTime: string;
-  checkOutTime?: string;
+  checkInTime: string;     // 표시용 시각 문자열
+  checkOutTime?: string;   // 표시용 시각 문자열
+  checkInAt?: number;      // epoch ms (실근무시간 계산용)
+  checkOutAt?: number;     // epoch ms
+  workedMinutes?: number;  // 실제 근무 분 (퇴근 시 확정)
+  isSubstitute?: boolean;  // 대타 근무 여부
 }
 
 // 직원 계정 — 직원이 직접 생성·관리. 고용 레코드와 독립적.
@@ -171,13 +175,13 @@ export async function updateEmployee(
 export async function recordCheckOut(
   id: string,
   date: string,
-  checkOutTime: string
+  fields: { checkOutTime: string; checkOutAt: number; workedMinutes?: number }
 ): Promise<Employee | null> {
   const employees = await getEmployees();
   const idx = employees.findIndex((e) => e.id === id);
   if (idx === -1) return null;
   const attendance = employees[idx].attendance.map((a) =>
-    a.date === date ? { ...a, checkOutTime } : a
+    a.date === date ? { ...a, ...fields } : a
   );
   employees[idx] = { ...employees[idx], attendance };
   await saveEmployees(employees);

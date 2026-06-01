@@ -5,12 +5,17 @@ import Link from "next/link";
 import { generateKeyPair, KeyPair } from "@/lib/crypto";
 import { createVP, VerifiableCredential, VerifiablePresentation } from "@/lib/vc";
 import { saveVC } from "@/lib/wallet";
+import { computeMonthlyPay, recordWorkedMinutes } from "@/lib/pay";
 
 // ── 타입 ────────────────────────────────────────────────────────────────────
 interface AttendanceRecord {
   date: string;
   checkInTime: string;
   checkOutTime?: string;
+  checkInAt?: number;
+  checkOutAt?: number;
+  workedMinutes?: number;
+  isSubstitute?: boolean;
 }
 
 interface Employment {
@@ -194,16 +199,20 @@ export default function WorkerPage() {
   }
 
   // ── 출근 / 퇴근 ───────────────────────────────────────────────────────────────
-  async function handleCheckIn(empId: string) {
+  async function handleCheckIn(empId: string, substitute = false) {
     setMsg("");
     try {
       const res = await fetch(`/api/employees/${empId}/attendance`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({ pin, substitute }),
       });
       const data = await res.json();
-      setMsg(res.ok ? `✅ 출근 체크 완료! (${data.checkInTime})` : `❌ ${data.error}`);
+      setMsg(
+        res.ok
+          ? `✅ ${data.isSubstitute ? "대타 " : ""}출근 체크 완료! (${data.checkInTime})`
+          : `❌ ${data.error}`
+      );
       await refresh();
     } catch {
       setMsg("❌ 서버 오류");
@@ -383,6 +392,7 @@ export default function WorkerPage() {
             keyPair={keyPair}
             didRegistered={didRegistered}
             onCheckIn={() => handleCheckIn(selected.id)}
+            onSubstituteCheckIn={() => handleCheckIn(selected.id, true)}
             onCheckOut={() => handleCheckOut(selected.id)}
           />
         )}
@@ -395,15 +405,16 @@ export default function WorkerPage() {
 
 // ── 근무 상세 패널 ────────────────────────────────────────────────────────────
 function EmploymentPanel({
-  emp, keyPair, didRegistered, onCheckIn, onCheckOut,
+  emp, keyPair, didRegistered, onCheckIn, onSubstituteCheckIn, onCheckOut,
 }: {
   emp: Employment;
   keyPair: KeyPair;
   didRegistered: boolean;
   onCheckIn: () => void;
+  onSubstituteCheckIn: () => void;
   onCheckOut: () => void;
 }) {
-  const [tab, setTab] = useState<"schedule" | "vc" | "vp">("schedule");
+  const [tab, setTab] = useState<"schedule" | "pay" | "vc" | "vp">("schedule");
   const [vpJson, setVpJson] = useState("");
   const [vpError, setVpError] = useState("");
 
@@ -414,6 +425,15 @@ function EmploymentPanel({
   const todayRecord = emp.attendance.find((a) => a.date === today);
   const checkedToday = !!todayRecord;
   const checkedOutToday = !!todayRecord?.checkOutTime;
+
+  const [pY, pM] = yearMonth.split("-").map(Number);
+  const pay = computeMonthlyPay(emp, pY, pM);
+
+  function fmtMin(min: number) {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m ? `${h}시간 ${m}분` : `${h}시간`;
+  }
 
   function makeVP() {
     setVpError(""); setVpJson("");
@@ -440,20 +460,29 @@ function EmploymentPanel({
       }`}>
         <div className="flex items-center justify-between">
           <div>
-            <p className="font-semibold text-gray-700">{emp.position} · 오늘 ({today})</p>
+            <p className="font-semibold text-gray-700">
+              {emp.position} · 오늘 ({today})
+              {todayRecord?.isSubstitute && <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">대타</span>}
+            </p>
             {checkedOutToday ? (
-              <p className="text-blue-600 font-bold">🏁 근무 완료 ({todayRecord?.checkInTime} → {todayRecord?.checkOutTime})</p>
+              <p className="text-blue-600 font-bold">
+                🏁 근무 완료 ({todayRecord?.checkInTime} → {todayRecord?.checkOutTime})
+                {todayRecord?.workedMinutes != null && <span className="ml-1 text-sm font-normal">· {fmtMin(todayRecord.workedMinutes)}</span>}
+              </p>
             ) : checkedToday ? (
               <p className="text-green-600 font-bold">✅ 출근 완료 — 퇴근 전 ({todayRecord?.checkInTime})</p>
             ) : isTodayWorkDay ? (
               <p className="text-orange-600 font-bold">오늘은 근무일입니다!</p>
             ) : (
-              <p className="text-gray-400">오늘은 근무일이 아닙니다</p>
+              <p className="text-gray-400">오늘은 근무일이 아닙니다 (대타 가능)</p>
             )}
           </div>
           <div>
             {isTodayWorkDay && !checkedToday && emp.status === "active" && (
               <button onClick={onCheckIn} className="bg-green-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-green-700 shadow-md">출근 체크</button>
+            )}
+            {!isTodayWorkDay && !checkedToday && emp.status === "active" && (
+              <button onClick={onSubstituteCheckIn} className="bg-purple-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-purple-700 shadow-md">대타 출근</button>
             )}
             {checkedToday && !checkedOutToday && (
               <button onClick={onCheckOut} className="bg-blue-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-blue-700 shadow-md">퇴근 체크</button>
@@ -465,10 +494,10 @@ function EmploymentPanel({
       {/* 탭 */}
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <div className="flex border-b">
-          {(["schedule", "vc", "vp"] as const).map((t) => (
+          {(["schedule", "pay", "vc", "vp"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`flex-1 py-3 text-sm font-medium transition-colors ${tab === t ? "text-green-600 border-b-2 border-green-600 bg-green-50" : "text-gray-500 hover:text-gray-700"}`}>
-              {t === "schedule" ? "📅 일정" : t === "vc" ? "📋 인증서" : "🔏 VP"}
+              {t === "schedule" ? "📅 일정" : t === "pay" ? "💰 급여" : t === "vc" ? "📋 인증서" : "🔏 VP"}
             </button>
           ))}
         </div>
@@ -479,24 +508,91 @@ function EmploymentPanel({
               <p className="font-semibold text-gray-700">이번 달 근무 일정</p>
               <p className="text-xs text-gray-400">{emp.weekdays.map((d) => WEEKDAY_LABELS[d]).join("/")}</p>
             </div>
-            {thisMonth.length === 0 ? (
-              <p className="text-gray-400 text-sm text-center py-4">이번 달 근무 일정이 없습니다</p>
-            ) : (
-              <div className="space-y-1">
-                {thisMonth.map((date) => {
-                  const att = emp.attendance.find((a) => a.date === date);
-                  const isToday2 = date === today;
-                  return (
-                    <div key={date} className={`flex justify-between items-center rounded-lg px-3 py-2 ${att ? "bg-green-50" : isToday2 ? "bg-orange-50 border border-orange-200" : date < today ? "bg-gray-50" : "bg-white border border-gray-100"}`}>
-                      <span className={`text-sm ${isToday2 ? "font-bold text-orange-600" : "text-gray-700"}`}>{date}{isToday2 ? " (오늘)" : ""}</span>
-                      <span className={`text-sm ${att?.checkOutTime ? "text-blue-600" : att ? "text-green-600" : isToday2 ? "text-orange-500" : date < today ? "text-red-400" : "text-gray-400"}`}>
-                        {att?.checkOutTime ? `✓ ${att.checkInTime} → ${att.checkOutTime}` : att ? `✓ ${att.checkInTime}` : isToday2 ? "출근 대기" : date < today ? "결근" : "예정"}
-                      </span>
-                    </div>
-                  );
-                })}
+            {(() => {
+              const monthDates = Array.from(new Set([
+                ...thisMonth,
+                ...emp.attendance.filter((a) => a.date.startsWith(yearMonth)).map((a) => a.date),
+              ])).sort();
+              if (monthDates.length === 0) {
+                return <p className="text-gray-400 text-sm text-center py-4">이번 달 근무 일정이 없습니다</p>;
+              }
+              return (
+                <div className="space-y-1">
+                  {monthDates.map((date) => {
+                    const att = emp.attendance.find((a) => a.date === date);
+                    const isToday2 = date === today;
+                    const isSub = att?.isSubstitute;
+                    const worked = att ? recordWorkedMinutes(att) : 0;
+                    return (
+                      <div key={date} className={`flex justify-between items-center rounded-lg px-3 py-2 ${att ? (isSub ? "bg-purple-50" : "bg-green-50") : isToday2 ? "bg-orange-50 border border-orange-200" : date < today ? "bg-gray-50" : "bg-white border border-gray-100"}`}>
+                        <span className={`text-sm ${isToday2 ? "font-bold text-orange-600" : "text-gray-700"}`}>
+                          {date}{isToday2 ? " (오늘)" : ""}
+                          {isSub && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700">대타</span>}
+                        </span>
+                        <span className={`text-sm text-right ${att?.checkOutTime ? "text-blue-600" : att ? "text-green-600" : isToday2 ? "text-orange-500" : date < today ? "text-red-400" : "text-gray-400"}`}>
+                          {att?.checkOutTime
+                            ? `✓ ${att.checkInTime} → ${att.checkOutTime}${worked ? ` (${fmtMin(worked)})` : ""}`
+                            : att ? `✓ ${att.checkInTime}` : isToday2 ? "출근 대기" : date < today ? "결근" : "예정"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {tab === "pay" && (
+          <div className="p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="font-semibold text-gray-700">{yearMonth} 예상 급여</p>
+              <p className="text-xs text-gray-400">실제 출퇴근 시각 기준</p>
+            </div>
+
+            <div className="bg-green-50 rounded-xl p-4 text-center">
+              <p className="text-xs text-gray-500">이번 달 받을 수 있는 총액 (세전)</p>
+              <p className="text-3xl font-bold text-green-700 mt-1">{pay.totalWon.toLocaleString()}원</p>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
+              <Row label="실 근무시간" value={fmtMin(pay.workedMinutes)} />
+              {pay.substituteMinutes > 0 && <Row label="└ 대타 근무" value={fmtMin(pay.substituteMinutes)} />}
+              <Row label="시급" value={`${emp.hourlyWage.toLocaleString()}원`} />
+              <div className="border-t pt-2"><Row label="기본급" value={`${pay.basePayWon.toLocaleString()}원`} /></div>
+              <Row label="주휴수당" value={`${pay.weeklyAllowanceWon.toLocaleString()}원`} />
+              <div className="border-t pt-2 font-semibold">
+                <Row label="합계" value={`${pay.totalWon.toLocaleString()}원`} />
               </div>
-            )}
+            </div>
+
+            {/* 주휴수당 안내 + 주별 내역 */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-600">주별 주휴수당 (주 15시간 이상 + 개근 시 지급)</p>
+              {!pay.weeklyEligible ? (
+                <p className="text-xs text-gray-400 bg-gray-50 rounded-lg p-2">
+                  주 소정근로 {emp.weeklyHours}시간 — 15시간 미만이라 주휴수당 대상이 아닙니다.
+                </p>
+              ) : pay.weeks.length === 0 ? (
+                <p className="text-xs text-gray-400 bg-gray-50 rounded-lg p-2">이번 달 소정근로일이 없습니다.</p>
+              ) : (
+                <div className="space-y-1">
+                  {pay.weeks.map((w) => (
+                    <div key={w.weekStart} className="flex justify-between items-center text-xs bg-white border border-gray-100 rounded-lg px-3 py-2">
+                      <span className="text-gray-600">{w.weekStart} 주 · 출근 {w.attendedDays}/{w.scheduledDays}일</span>
+                      {w.eligible
+                        ? <span className="text-green-600 font-medium">+{w.allowanceWon.toLocaleString()}원</span>
+                        : <span className="text-gray-400">{w.perfect ? "대상 아님" : "결근 — 미지급"}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              ※ 주휴수당은 1주 소정근로 15시간 이상이면서 그 주 소정근로일을 모두 출근(개근)한 경우 지급되며,
+              (주 소정근로시간 ÷ 40) × 8 × 시급으로 계산한 예상치입니다. 실제 지급액은 사업장 정책·공제에 따라 다를 수 있습니다.
+            </p>
           </div>
         )}
 
