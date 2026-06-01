@@ -563,7 +563,7 @@ export default function EmployerPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="시급 (원) *">
-                  <input type="number" className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="10030"
+                  <input type="number" className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="10320"
                     value={addForm.hourlyWage} onChange={(e) => setAddForm((f) => ({ ...f, hourlyWage: e.target.value }))} />
                 </Field>
                 <Field label="주간 근무 시간 (시간/주) *">
