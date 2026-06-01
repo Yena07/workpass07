@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { generateKeyPair, KeyPair } from "@/lib/crypto";
 import { createVP, VerifiableCredential, VerifiablePresentation } from "@/lib/vc";
+import { saveVC } from "@/lib/wallet";
 
 // ── 타입 ────────────────────────────────────────────────────────────────────
 interface AttendanceRecord {
@@ -68,6 +69,20 @@ export default function WorkerPage() {
   const [vpLoading, setVpLoading] = useState(false);
   const [vpError, setVpError] = useState("");
 
+  // 지갑 자동 동기화
+  const [walletSyncMsg, setWalletSyncMsg] = useState("");
+
+  // 발급된 VC를 통합 지갑(workpass_vcs)에 자동 저장 — 수동 다운로드/붙여넣기 제거
+  function syncVCToWallet(emp: EmployeeData | null) {
+    if (!emp?.vc) return;
+    const saved = saveVC(emp.vc as VerifiableCredential);
+    setWalletSyncMsg(
+      saved
+        ? "✓ 경력 인증서가 내 지갑에 자동 저장됐습니다"
+        : "✓ 이 경력은 이미 내 지갑에 저장돼 있습니다"
+    );
+  }
+
   // 로컬 날짜 (타임존 문제 방지)
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -111,6 +126,8 @@ export default function WorkerPage() {
         setEmployee(data);
         // 로컬 키쌍 불러오기 또는 생성
         loadOrCreateKeyPair(data.id, data);
+        // 발급된 경력이 있으면 통합 지갑에 자동 저장
+        syncVCToWallet(data);
         setStep("dashboard");
       } else {
         setPinError(data.error || "PIN 오류");
@@ -176,6 +193,8 @@ export default function WorkerPage() {
       if (loginRes.ok) {
         const data = await loginRes.json();
         setEmployee(data);
+        // 새로 발급된 경력이 있으면 통합 지갑에 자동 저장
+        syncVCToWallet(data);
       }
     } catch {
       // ignore
@@ -615,6 +634,22 @@ export default function WorkerPage() {
                     );
                   })()}
 
+                  {/* 자동 지갑 동기화 안내 */}
+                  <div className="bg-green-50 rounded-lg p-3 space-y-2">
+                    <p className="text-sm text-green-700">
+                      {walletSyncMsg || "✓ 경력 인증서가 내 지갑에 자동 저장됐습니다"}
+                    </p>
+                    <p className="text-xs text-green-600">
+                      여러 직장의 경력이 로그인할 때마다 내 지갑에 자동으로 모입니다. 다운로드·붙여넣기 없이 한곳에서 관리하세요.
+                    </p>
+                    <Link
+                      href="/wallet"
+                      className="block w-full text-center bg-green-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-green-700"
+                    >
+                      👛 내 지갑에서 통합 관리
+                    </Link>
+                  </div>
+
                   <button
                     onClick={() => {
                       const blob = new Blob([JSON.stringify(employee.vc, null, 2)], { type: "application/json" });
@@ -623,9 +658,9 @@ export default function WorkerPage() {
                       a.href = url; a.download = "employment_vc.json"; a.click();
                       URL.revokeObjectURL(url);
                     }}
-                    className="w-full border border-green-500 text-green-600 rounded-lg py-2 text-sm hover:bg-green-50"
+                    className="w-full border border-gray-300 text-gray-500 rounded-lg py-2 text-sm hover:bg-gray-50"
                   >
-                    📥 VC JSON 다운로드
+                    📥 VC JSON 백업 다운로드 (선택)
                   </button>
                 </div>
               ) : (

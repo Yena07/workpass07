@@ -35,11 +35,13 @@ export function resetWallet(role: "issuer" | "holder" | "verifier"): void {
   localStorage.removeItem(`${WALLET_KEY}_${role}`);
 }
 
-// VC 저장 (소유자 지갑)
-export function saveVC(vc: VerifiableCredential): void {
+// VC 저장 (소유자 지갑) — 같은 id면 중복 저장하지 않음
+export function saveVC(vc: VerifiableCredential): boolean {
   const vcs = loadVCs();
+  if (vcs.some((v) => v.id === vc.id)) return false;
   vcs.push(vc);
   localStorage.setItem(VCS_KEY, JSON.stringify(vcs));
+  return true;
 }
 
 export function loadVCs(): VerifiableCredential[] {
