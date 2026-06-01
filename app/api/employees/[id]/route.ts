@@ -21,15 +21,9 @@ export async function PATCH(
     const employee = await getEmployee(id);
     if (!employee) return NextResponse.json({ error: "직원을 찾을 수 없습니다" }, { status: 404 });
 
-    if (body.requirePin) {
-      if (employee.pin !== String(body.pin)) {
-        return NextResponse.json({ error: "PIN이 올바르지 않습니다" }, { status: 403 });
-      }
-      delete body.requirePin;
-      delete body.pin;
-    }
-
-    delete body.pin;
+    // 고용 레코드 자체 식별/소유 필드는 변경 불가
+    delete body.id;
+    delete body.workerId;
     delete body.attendance;
 
     const updated = await updateEmployee(id, body);

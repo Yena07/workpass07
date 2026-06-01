@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getEmployees,
+  getWorker,
   addEmployee,
   computeWorkDates,
   sanitizeEmployee,
@@ -11,21 +12,26 @@ export async function GET() {
   return NextResponse.json(employees.map(sanitizeEmployee));
 }
 
+// 사장이 직원 계정(workerId)을 연결해 고용 레코드 생성
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, position, employmentType, startDate, endDate, weekdays, hourlyWage, weeklyHours, pin } = body;
+    const { workerId, position, employmentType, startDate, endDate, weekdays, hourlyWage, weeklyHours } = body;
 
-    if (!name || !position || !startDate || !weekdays?.length || !hourlyWage || !pin) {
+    if (!workerId || !position || !startDate || !weekdays?.length || !hourlyWage) {
       return NextResponse.json({ error: "필수 항목이 누락되었습니다" }, { status: 400 });
     }
-    if (String(pin).length !== 4 || isNaN(Number(pin))) {
-      return NextResponse.json({ error: "PIN은 4자리 숫자여야 합니다" }, { status: 400 });
+
+    const worker = await getWorker(String(workerId).trim());
+    if (!worker) {
+      return NextResponse.json({ error: "존재하지 않는 직원 ID입니다" }, { status: 404 });
     }
 
     const specificDates = computeWorkDates(startDate, endDate || "", weekdays);
     const employee = await addEmployee({
-      name: String(name).trim(),
+      workerId: worker.id,
+      name: worker.name,
+      workerDid: worker.did,
       position: String(position).trim(),
       employmentType: String(employmentType || "단기/시간제"),
       startDate,
@@ -34,7 +40,6 @@ export async function POST(req: NextRequest) {
       specificDates,
       hourlyWage: Number(hourlyWage),
       weeklyHours: Number(weeklyHours || 0),
-      pin: String(pin),
     });
 
     return NextResponse.json(sanitizeEmployee(employee), { status: 201 });

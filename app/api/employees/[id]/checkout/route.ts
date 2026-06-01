@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getEmployee, recordCheckOut } from "@/lib/server-store";
+import { getEmployee, getWorker, recordCheckOut } from "@/lib/server-store";
 
 export async function POST(
   req: NextRequest,
@@ -10,7 +10,8 @@ export async function POST(
     const { pin } = await req.json();
     const employee = await getEmployee(id);
     if (!employee) return NextResponse.json({ error: "직원을 찾을 수 없습니다" }, { status: 404 });
-    if (employee.pin !== String(pin)) return NextResponse.json({ error: "PIN이 올바르지 않습니다" }, { status: 403 });
+    const worker = await getWorker(employee.workerId);
+    if (!worker || worker.pin !== String(pin)) return NextResponse.json({ error: "PIN이 올바르지 않습니다" }, { status: 403 });
 
     const today = new Date().toISOString().split("T")[0];
     const todayRecord = employee.attendance.find((a) => a.date === today);

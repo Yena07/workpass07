@@ -16,6 +16,7 @@ interface AttendanceRecord {
 
 interface Employee {
   id: string;
+  workerId: string;
   name: string;
   position: string;
   employmentType: string;
@@ -34,7 +35,6 @@ interface Employee {
 }
 
 type AddForm = {
-  name: string;
   position: string;
   employmentType: string;
   startDate: string;
@@ -42,8 +42,9 @@ type AddForm = {
   weekdays: string[];
   hourlyWage: string;
   weeklyHours: string;
-  pin: string;
 };
+
+type FoundWorker = { id: string; name: string; did: string | null };
 
 const WEEKDAY_LABELS: { key: string; label: string }[] = [
   { key: "mon", label: "월" },
@@ -72,6 +73,12 @@ export default function EmployerPage() {
   const [addForm, setAddForm] = useState<AddForm>(defaultForm());
   const [addError, setAddError] = useState("");
   const [addLoading, setAddLoading] = useState(false);
+
+  // 직원 ID 검색
+  const [searchId, setSearchId] = useState("");
+  const [foundWorker, setFoundWorker] = useState<FoundWorker | null>(null);
+  const [searchMsg, setSearchMsg] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // 직원 상세 패널
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
@@ -110,7 +117,6 @@ export default function EmployerPage() {
 
   function defaultForm(): AddForm {
     return {
-      name: "",
       position: "",
       employmentType: "단기/시간제",
       startDate: "",
@@ -118,8 +124,38 @@ export default function EmployerPage() {
       weekdays: ["mon", "tue", "wed", "thu", "fri"],
       hourlyWage: "",
       weeklyHours: "",
-      pin: "",
     };
+  }
+
+  function openAddModal() {
+    setAddForm(defaultForm());
+    setAddError("");
+    setSearchId("");
+    setFoundWorker(null);
+    setSearchMsg("");
+    setShowModal(true);
+  }
+
+  // 직원 계정 ID 검색
+  async function handleSearchWorker() {
+    setSearchMsg("");
+    setFoundWorker(null);
+    if (!searchId.trim()) return setSearchMsg("직원 ID를 입력하세요");
+    setSearchLoading(true);
+    try {
+      const res = await fetch(`/api/workers/search?id=${encodeURIComponent(searchId.trim())}`);
+      const data = await res.json();
+      if (res.ok) {
+        setFoundWorker(data);
+        setSearchMsg("");
+      } else {
+        setSearchMsg(data.error || "검색 실패");
+      }
+    } catch {
+      setSearchMsg("서버 오류");
+    } finally {
+      setSearchLoading(false);
+    }
   }
 
   // ── MetaMask 연결 ──────────────────────────────────────────────────────────
@@ -183,7 +219,7 @@ export default function EmployerPage() {
   // ── 직원 추가 ──────────────────────────────────────────────────────────────
   async function handleAddEmployee() {
     setAddError("");
-    if (!addForm.name.trim()) return setAddError("이름을 입력하세요");
+    if (!foundWorker) return setAddError("먼저 직원 ID를 검색해 연결하세요");
     if (!addForm.position.trim()) return setAddError("직무를 입력하세요");
     if (!addForm.startDate) return setAddError("근무 시작일을 입력하세요");
     if (addForm.endDate && new Date(addForm.endDate) < new Date(addForm.startDate))
@@ -191,8 +227,6 @@ export default function EmployerPage() {
     if (addForm.weekdays.length === 0) return setAddError("근무 요일을 하나 이상 선택하세요");
     if (!addForm.hourlyWage) return setAddError("시급을 입력하세요");
     if (!addForm.weeklyHours) return setAddError("주간 근무 시간을 입력하세요");
-    if (addForm.pin.length !== 4 || isNaN(Number(addForm.pin)))
-      return setAddError("PIN은 4자리 숫자여야 합니다");
 
     setAddLoading(true);
     try {
@@ -200,7 +234,12 @@ export default function EmployerPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...addForm,
+          workerId: foundWorker.id,
+          position: addForm.position,
+          employmentType: addForm.employmentType,
+          startDate: addForm.startDate,
+          endDate: addForm.endDate,
+          weekdays: addForm.weekdays,
           hourlyWage: Number(addForm.hourlyWage),
           weeklyHours: Number(addForm.weeklyHours),
         }),
@@ -208,7 +247,6 @@ export default function EmployerPage() {
       const data = await res.json();
       if (!res.ok) { setAddError(data.error || "추가 실패"); return; }
       setShowModal(false);
-      setAddForm(defaultForm());
       await fetchEmployees();
     } catch {
       setAddError("서버 오류가 발생했습니다");
@@ -453,7 +491,7 @@ export default function EmployerPage() {
               <span className="ml-2 text-sm text-gray-400">({activeEmployees.length}명)</span>
             </h3>
             <button
-              onClick={() => { setAddForm(defaultForm()); setAddError(""); setShowModal(true); }}
+              onClick={openAddModal}
               className="flex items-center gap-1 bg-orange-500 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-orange-600"
             >
               + 직원 추가
@@ -517,9 +555,30 @@ export default function EmployerPage() {
             </div>
 
             <div className="p-6 space-y-4">
-              <Field label="이름 *">
-                <input className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="홍길동"
-                  value={addForm.name} onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))} />
+              <Field label="직원 ID 검색 *">
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono"
+                    placeholder="직원이 알려준 ID (예: hong123)"
+                    value={searchId}
+                    onChange={(e) => { setSearchId(e.target.value.replace(/[^a-zA-Z0-9_]/g, "")); setFoundWorker(null); }}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearchWorker()}
+                  />
+                  <button onClick={handleSearchWorker} disabled={searchLoading}
+                    className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm hover:bg-orange-600 disabled:opacity-50">
+                    {searchLoading ? "..." : "검색"}
+                  </button>
+                </div>
+                {searchMsg && <p className="text-xs text-red-500 mt-1">{searchMsg}</p>}
+                {foundWorker && (
+                  <div className="mt-2 bg-green-50 rounded-lg p-3 text-sm">
+                    <p className="text-green-700 font-medium">✓ {foundWorker.name} (ID: {foundWorker.id})</p>
+                    <p className={`text-xs mt-0.5 ${foundWorker.did ? "text-green-600" : "text-yellow-600"}`}>
+                      {foundWorker.did ? "DID 등록됨 — VC 발급 가능" : "⚠️ 직원이 아직 DID 미등록 (연결은 가능)"}
+                    </p>
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 mt-1">직원이 직원 포털에서 계정을 만든 뒤 알려준 ID로 검색하세요</p>
               </Field>
 
               <Field label="직무 *">
@@ -571,12 +630,6 @@ export default function EmployerPage() {
                     value={addForm.weeklyHours} onChange={(e) => setAddForm((f) => ({ ...f, weeklyHours: e.target.value }))} />
                 </Field>
               </div>
-
-              <Field label="직원 PIN (4자리 숫자) *">
-                <input type="text" maxLength={4} className="w-full border rounded-lg px-3 py-2 text-sm font-mono tracking-widest" placeholder="1234"
-                  value={addForm.pin} onChange={(e) => setAddForm((f) => ({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 4) }))} />
-                <p className="text-xs text-gray-400 mt-1">이 PIN을 직원에게 전달하세요. 직원이 출근 체크 시 사용합니다.</p>
-              </Field>
 
               {/* 주간 시간 → 1일 근무시간 미리보기 */}
               {addForm.weeklyHours && addForm.weekdays.length > 0 && (
@@ -681,12 +734,9 @@ function EmployeeRow({
             </div>
           ) : (
             <div className="bg-yellow-50 rounded-lg p-2">
-              <p className="text-xs text-yellow-700">⚠️ 직원이 아직 DID를 등록하지 않았습니다. PIN을 알려주고 직원 페이지에서 로그인하게 하세요.</p>
+              <p className="text-xs text-yellow-700">⚠️ 직원이 아직 DID를 등록하지 않았습니다. 직원이 본인 계정으로 로그인 후 DID를 등록해야 VC를 발급할 수 있습니다.</p>
             </div>
           )}
-
-          {/* PIN 확인 */}
-          <PinRevealBox employeeId={emp.id} />
 
           {/* 출근 기록 */}
           {emp.attendance.length > 0 && (
@@ -795,39 +845,3 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function PinRevealBox({ employeeId }: { employeeId: string }) {
-  const [pin, setPin] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [revealed, setRevealed] = useState(false);
-
-  async function revealPin() {
-    if (revealed) { setRevealed(false); return; }
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/employees/${employeeId}/pin`);
-      const data = await res.json();
-      if (res.ok) { setPin(data.pin); setRevealed(true); }
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
-  }
-
-  return (
-    <div className="bg-gray-50 rounded-lg p-2">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs text-gray-500">직원 PIN (직원에게 알려주세요)</p>
-          <p className="text-lg font-mono font-bold text-gray-700 tracking-widest">
-            {revealed && pin ? pin : "••••"}
-          </p>
-        </div>
-        <button
-          onClick={revealPin}
-          disabled={loading}
-          className="text-xs text-orange-500 hover:underline border border-orange-200 px-2 py-1 rounded"
-        >
-          {loading ? "..." : revealed ? "숨기기" : "PIN 확인"}
-        </button>
-      </div>
-    </div>
-  );
-}
