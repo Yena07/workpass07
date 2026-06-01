@@ -34,6 +34,7 @@ export async function POST(
         totalHours: (cs?.totalHours as number) ?? null,
         status: e.status,
         hasVC: !!e.vc,
+        vc: e.vc ?? null,
       };
     });
 

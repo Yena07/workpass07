@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { VerifiablePresentation } from "@/lib/vc";
+import { VerifiableCredential, VerifiablePresentation } from "@/lib/vc";
 import { verifySignature } from "@/lib/crypto";
 import { checkRevocationStatus, resolvePublicKey } from "@/lib/blockchain";
 
@@ -48,6 +48,14 @@ type Career = {
   totalHours: number | null;
   status: "active" | "terminated";
   hasVC: boolean;
+  vc: VerifiableCredential | null;
+};
+
+type CareerVerify = {
+  state: "pending" | "verifying" | "done";
+  issuerSig: boolean | null;   // null = 공개키 없음 / VC 없음
+  revoked: "valid" | "revoked" | "unknown";
+  note?: string;
 };
 
 export default function BankPage() {
@@ -60,6 +68,7 @@ export default function BankPage() {
   const [lookupMsg, setLookupMsg] = useState("");
   const [careers, setCareers] = useState<Career[] | null>(null);
   const [careerName, setCareerName] = useState("");
+  const [careerVerify, setCareerVerify] = useState<Record<string, CareerVerify>>({});
 
   const [vpInput, setVpInput] = useState("");
   const [issuerPubKey, setIssuerPubKey] = useState("");
@@ -227,15 +236,62 @@ export default function BankPage() {
         setLookupMsg(`❌ ${data.error || "조회 실패"}`);
         return;
       }
-      setCareers(data.careers);
+      const list: Career[] = data.careers;
+      setCareers(list);
       setCareerName(data.worker?.name || lookupId.trim());
-      if (data.careers.length === 0) {
+      if (list.length === 0) {
         setLookupMsg("등록된 경력이 없습니다.");
+      } else {
+        verifyCareers(list);
       }
     } catch {
       setLookupMsg("❌ 네트워크 오류 — 다시 시도하세요");
     } finally {
       setLookupLoading(false);
+    }
+  }
+
+  // 조회된 각 경력의 VC를 블록체인 공개키로 자동 검증 (발행자 서명 + 폐기 여부)
+  async function verifyCareers(list: Career[]) {
+    const init: Record<string, CareerVerify> = {};
+    for (const c of list) {
+      init[c.id] = c.hasVC
+        ? { state: "verifying", issuerSig: null, revoked: "unknown" }
+        : { state: "done", issuerSig: null, revoked: "unknown", note: "VC 미발급" };
+    }
+    setCareerVerify(init);
+
+    const pubKeyCache = new Map<string, string | null>();
+
+    for (const c of list) {
+      const vc = c.vc;
+      if (!vc?.proof) continue;
+      let result: CareerVerify = { state: "done", issuerSig: null, revoked: "unknown" };
+      try {
+        // 1) 발행자 공개키 — DID별 캐시
+        let pubKey = pubKeyCache.get(vc.issuer);
+        if (pubKey === undefined) {
+          const r = await resolvePublicKey(vc.issuer);
+          pubKey = r.found && r.publicKeyHex ? r.publicKeyHex : null;
+          pubKeyCache.set(vc.issuer, pubKey);
+        }
+        if (pubKey) {
+          const payload = JSON.stringify({ ...vc, proof: undefined });
+          result.issuerSig = verifySignature(payload, vc.proof.proofValue, pubKey);
+        } else {
+          result.note = "발행자 공개키 미등록";
+        }
+
+        // 2) 폐기 여부
+        const cs = vc.credentialStatus;
+        if (cs?.statusListId !== undefined && cs?.statusListIndex !== undefined) {
+          const rev = await checkRevocationStatus(cs.statusListId, cs.statusListIndex);
+          if (rev.checked) result.revoked = rev.revoked ? "revoked" : "valid";
+        }
+      } catch {
+        result = { state: "done", issuerSig: null, revoked: "unknown", note: "검증 오류" };
+      }
+      setCareerVerify((prev) => ({ ...prev, [c.id]: result }));
     }
   }
 
@@ -273,9 +329,11 @@ export default function BankPage() {
         {tab === "direct" && (
           <>
             <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
-              <p className="text-sm font-semibold text-indigo-800 mb-1">👤 직원 직접 조회</p>
+              <p className="text-sm font-semibold text-indigo-800 mb-1">👤 직원 직접 조회 (자동 검증)</p>
               <p className="text-xs text-indigo-700">
-                직원 본인이 창구에서 <strong>아이디와 PIN</strong>을 입력하면 등록된 모든 경력을 바로 확인할 수 있습니다.
+                직원 본인이 창구에서 <strong>아이디와 PIN</strong>을 입력하면 등록된 모든 경력을 바로 확인하고,
+                각 경력 인증서의 <strong>발행자 서명·폐기 여부를 블록체인에서 자동으로 검증</strong>합니다.
+                VP 파일·공개키를 따로 주고받을 필요가 없습니다.
               </p>
             </div>
 
@@ -326,7 +384,7 @@ export default function BankPage() {
                     {careerName} 님의 경력 ({careers.length}건)
                   </p>
                   <button
-                    onClick={() => { setCareers(null); setLookupPin(""); }}
+                    onClick={() => { setCareers(null); setLookupPin(""); setCareerVerify({}); }}
                     className="text-xs text-gray-400 hover:text-red-400"
                   >
                     ✕ 닫기
@@ -350,12 +408,43 @@ export default function BankPage() {
                     {c.hourlyWage > 0 && <Row label="시급" value={`${c.hourlyWage.toLocaleString()}원`} />}
                     <Row label="출근 일수" value={`${c.attendanceCount}일`} />
                     {c.totalHours != null && <Row label="총 근무시간" value={`${c.totalHours}시간`} />}
-                    <div className="flex justify-between pt-1 border-t">
-                      <span className="text-gray-500">경력 인증서(VC)</span>
-                      {c.hasVC
-                        ? <span className="text-green-600 font-medium">✓ 발급됨</span>
-                        : <span className="text-gray-400 text-xs">미발급</span>}
-                    </div>
+                    {(() => {
+                      const v = careerVerify[c.id];
+                      return (
+                        <div className="pt-1.5 border-t space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-500">경력 인증서(VC)</span>
+                            {c.hasVC
+                              ? <span className="text-green-600 font-medium text-xs">✓ 발급됨</span>
+                              : <span className="text-gray-400 text-xs">미발급</span>}
+                          </div>
+                          {c.hasVC && (
+                            <>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-500">발행자 서명</span>
+                                {!v || v.state === "verifying"
+                                  ? <span className="text-gray-400 text-xs">검증 중…</span>
+                                  : v.issuerSig === true
+                                  ? <span className="text-green-600 font-medium text-xs">✓ 진본 확인</span>
+                                  : v.issuerSig === false
+                                  ? <span className="text-red-600 font-medium text-xs">✗ 위·변조</span>
+                                  : <span className="text-gray-400 text-xs">{v.note || "공개키 없음"}</span>}
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-500">폐기 여부</span>
+                                {!v || v.state === "verifying"
+                                  ? <span className="text-gray-400 text-xs">확인 중…</span>
+                                  : v.revoked === "valid"
+                                  ? <span className="text-green-600 font-medium text-xs">✓ 유효</span>
+                                  : v.revoked === "revoked"
+                                  ? <span className="text-red-600 font-medium text-xs">✗ 폐기됨</span>
+                                  : <span className="text-gray-400 text-xs">미확인</span>}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
