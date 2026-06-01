@@ -35,7 +35,32 @@ const STATUS_CONFIG = {
   error:   { bg: "bg-gray-50 border-gray-200",      icon: "⚙️", text: "text-gray-700",   label: "오류" },
 };
 
+type Career = {
+  id: string;
+  employerName: string | null;
+  position: string;
+  employmentType: string;
+  startDate: string;
+  endDate: string;
+  hourlyWage: number;
+  weeklyHours: number;
+  attendanceCount: number;
+  totalHours: number | null;
+  status: "active" | "terminated";
+  hasVC: boolean;
+};
+
 export default function BankPage() {
+  const [tab, setTab] = useState<"direct" | "vp">("direct");
+
+  // ── 직원 직접 조회 (ID + PIN) ──────────────────────────────────────────────
+  const [lookupId, setLookupId] = useState("");
+  const [lookupPin, setLookupPin] = useState("");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupMsg, setLookupMsg] = useState("");
+  const [careers, setCareers] = useState<Career[] | null>(null);
+  const [careerName, setCareerName] = useState("");
+
   const [vpInput, setVpInput] = useState("");
   const [issuerPubKey, setIssuerPubKey] = useState("");
   const [holderPubKey, setHolderPubKey] = useState("");
@@ -186,6 +211,34 @@ export default function BankPage() {
     }
   }
 
+  async function handleDirectLookup() {
+    if (!lookupId.trim() || !lookupPin.trim()) return;
+    setLookupLoading(true);
+    setLookupMsg("");
+    setCareers(null);
+    try {
+      const res = await fetch(`/api/workers/${encodeURIComponent(lookupId.trim())}/careers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: lookupPin.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLookupMsg(`❌ ${data.error || "조회 실패"}`);
+        return;
+      }
+      setCareers(data.careers);
+      setCareerName(data.worker?.name || lookupId.trim());
+      if (data.careers.length === 0) {
+        setLookupMsg("등록된 경력이 없습니다.");
+      }
+    } catch {
+      setLookupMsg("❌ 네트워크 오류 — 다시 시도하세요");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-indigo-700 text-white px-6 py-4 flex items-center gap-4">
@@ -197,6 +250,121 @@ export default function BankPage() {
       </header>
 
       <div className="max-w-2xl mx-auto p-6 space-y-4">
+        {/* 탭 전환 */}
+        <div className="flex gap-2 bg-white rounded-xl p-1 shadow-sm">
+          <button
+            onClick={() => setTab("direct")}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+              tab === "direct" ? "bg-indigo-700 text-white" : "text-gray-500 hover:bg-gray-50"
+            }`}
+          >
+            👤 직원 직접 조회
+          </button>
+          <button
+            onClick={() => setTab("vp")}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
+              tab === "vp" ? "bg-indigo-700 text-white" : "text-gray-500 hover:bg-gray-50"
+            }`}
+          >
+            🔐 VP 파일 검증
+          </button>
+        </div>
+
+        {tab === "direct" && (
+          <>
+            <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
+              <p className="text-sm font-semibold text-indigo-800 mb-1">👤 직원 직접 조회</p>
+              <p className="text-xs text-indigo-700">
+                직원 본인이 창구에서 <strong>아이디와 PIN</strong>을 입력하면 등록된 모든 경력을 바로 확인할 수 있습니다.
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl p-6 shadow-sm space-y-4">
+              <h2 className="text-lg font-semibold">직원 아이디 · PIN 입력</h2>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">직원 아이디 *</label>
+                <input
+                  className="w-full border rounded-lg px-4 py-2 text-sm"
+                  placeholder="직원 본인 로그인 아이디"
+                  value={lookupId}
+                  onChange={(e) => setLookupId(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">PIN (4자리) *</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  className="w-full border rounded-lg px-4 py-2 text-sm tracking-widest"
+                  placeholder="••••"
+                  value={lookupPin}
+                  onChange={(e) => setLookupPin(e.target.value.replace(/\D/g, ""))}
+                  onKeyDown={(e) => e.key === "Enter" && handleDirectLookup()}
+                />
+              </div>
+              {lookupMsg && (
+                <p className={`text-xs px-2 py-1.5 rounded ${
+                  lookupMsg.startsWith("❌") ? "bg-red-50 text-red-600" : "bg-gray-50 text-gray-600"
+                }`}>
+                  {lookupMsg}
+                </p>
+              )}
+              <button
+                className="w-full bg-indigo-700 text-white rounded-lg py-3 font-semibold hover:bg-indigo-800 disabled:opacity-50"
+                disabled={!lookupId.trim() || lookupPin.length < 4 || lookupLoading}
+                onClick={handleDirectLookup}
+              >
+                {lookupLoading ? "조회 중..." : "🔍 경력 조회"}
+              </button>
+            </div>
+
+            {careers && careers.length > 0 && (
+              <div className="bg-white rounded-xl p-6 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-gray-700">
+                    {careerName} 님의 경력 ({careers.length}건)
+                  </p>
+                  <button
+                    onClick={() => { setCareers(null); setLookupPin(""); }}
+                    className="text-xs text-gray-400 hover:text-red-400"
+                  >
+                    ✕ 닫기
+                  </button>
+                </div>
+                {careers.map((c) => (
+                  <div key={c.id} className="border rounded-lg p-3 space-y-1.5 text-sm">
+                    <div className="flex justify-between items-start">
+                      <span className="font-semibold text-gray-800">
+                        {c.employerName || "(사업장명 미발급)"}
+                      </span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        c.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                      }`}>
+                        {c.status === "active" ? "재직" : "퇴사"}
+                      </span>
+                    </div>
+                    <Row label="직무" value={c.position} />
+                    {c.employmentType && <Row label="고용형태" value={c.employmentType} />}
+                    <Row label="근무 기간" value={`${c.startDate || "?"} ~ ${c.endDate || "미정"}`} />
+                    {c.hourlyWage > 0 && <Row label="시급" value={`${c.hourlyWage.toLocaleString()}원`} />}
+                    <Row label="출근 일수" value={`${c.attendanceCount}일`} />
+                    {c.totalHours != null && <Row label="총 근무시간" value={`${c.totalHours}시간`} />}
+                    <div className="flex justify-between pt-1 border-t">
+                      <span className="text-gray-500">경력 인증서(VC)</span>
+                      {c.hasVC
+                        ? <span className="text-green-600 font-medium">✓ 발급됨</span>
+                        : <span className="text-gray-400 text-xs">미발급</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "vp" && (
+        <>
         {/* 안내 카드 */}
         <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
           <p className="text-sm font-semibold text-indigo-800 mb-1">🏦 검증 절차</p>
@@ -408,6 +576,8 @@ export default function BankPage() {
             </div>
           );
         })()}
+        </>
+        )}
       </div>
     </div>
   );
